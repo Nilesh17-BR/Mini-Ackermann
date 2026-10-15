@@ -1,0 +1,11 @@
+# Shared mapping and local communication settings.
+MIN_LINEAR_VELOCITY = -5.0
+MAX_LINEAR_VELOCITY = 5.0
+MIN_VOLTAGE = 0.5
+MAX_VOLTAGE = 3.3
+SEND_PERIOD = 0.1
+
+LOCAL_HOST = "127.0.0.1"
+LOCAL_PORT = 5005
+CMD_TIMEOUT = 0.5
+SERIAL_PORT = "COM6"

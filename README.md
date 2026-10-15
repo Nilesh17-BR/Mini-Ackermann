@@ -1,26 +1,45 @@
 # Mini Ackermann
 
-ROS 2 host scripts and STM32 firmware for converting linear velocity commands
-into analog control voltage using an MCP4728 DAC.
+Host scripts and STM32 firmware for controlling an MCP4728 DAC through UART.
+Choose the ROS 2 setup or the standalone keyboard setup without ROS.
 
 ## Project layout
 
-```text
-STM32/
-├── README.md                 # Wiring, firmware, configuration and operation
-├── setup.sh                  # Host dependency installation and checks
-├── cmd_vel_stm2_dac.py        # ROS 2 to UART bridge
-├── ros_cmd.py                # Interactive velocity publisher
-├── test_urt.py               # UART PING test
-└── dac_stm32/
-    └── dac_stm32.ino         # STM32 Black Pill firmware
+| Folder | Contents | Instructions |
+| --- | --- | --- |
+| `STM32/` | ROS 2 velocity/voltage publishers, UART bridge and firmware | [ROS setup](STM32/README.md) |
+| `STM32_No_ROS/` | Separate keyboard voltage controller, pyserial bridge, shared settings and firmware | [Non-ROS setup](STM32_No_ROS/README.md) |
+
+## Without ROS
+
+Install dependencies from the repository root:
+
+```bash
+cd STM32_No_ROS
+python -m pip install -r requirements.txt
 ```
 
-## Setup
+In terminal 1, start the serial bridge (replace COM6 with your adapter's port):
 
-Install and source ROS 2 on the host first. Replace `<distro>` below with your
-installed distribution. The setup script installs missing host dependencies
-using apt; it does not install ROS 2 itself or flash the firmware.
+```bash
+python serial_dac.py --port COM6
+```
+
+In terminal 2, from the same folder:
+
+```bash
+python voltage_control.py
+```
+
+Up/Down changes voltage, `h` toggles repeated changes while holding an arrow,
+Space requests neutral, and Esc exits. No Enter key is needed. The current
+keyboard version uses `STEP` and `INTERVAL` constants rather than `--rate`
+and `--step` options. See the [non-ROS README](STM32_No_ROS/README.md) for
+rate examples, all controls, configuration, wiring and shutdown behavior.
+
+## With ROS 2
+
+Install and source ROS 2 first. Replace `<distro>` with your distribution:
 
 ```bash
 source /opt/ros/<distro>/setup.bash
@@ -28,18 +47,18 @@ cd STM32
 ./setup.sh
 ```
 
-Follow the [STM32 README](STM32/README.md) for hardware wiring, firmware upload,
-serial port configuration, and running the bridge and velocity publisher.
-These are standalone Python scripts; a colcon build is not needed.
+Follow the [STM32 README](STM32/README.md) to run `cmd_vel_stm2_dac.py`
+with either `ros_cmd.py` (velocity commands) or `ros_voltage_cmd.py`
+(voltage targets and an automatic up/down ramp). A colcon build is not needed.
 
-## Command flow
+## Hardware and mapping
 
-```text
-ros_cmd.py → /cmd_vel_ros (geometry_msgs/Twist)
-           → cmd_vel_stm2_dac.py → UART → STM32 → I2C → MCP4728
-```
+Both setups use STM32 Black Pill firmware and an MCP4728 DAC. Current host
+settings map -5 to +5 input commands to 0.5-3.3 V, with neutral at 1.9 V.
+Only the ROS bridge's `linear.x` is used; steering is not implemented.
+Run only one setup on the UART port at a time.
 
-Only `linear.x` is used. Steering is not implemented in this workspace.
-The default mapping converts -5 to +5 m/s into 0 to 5 V; zero velocity is
-2.5 V. Keep the downstream drive disabled during startup and configuration,
-and verify that this neutral voltage matches the controller before operation.
+Firmware startup writes 0 V before mapping is configured. Keep the downstream
+drive disabled during startup and configuration, and verify actual output
+and the controller's required neutral voltage before operation. Wiring and
+firmware-upload instructions are in each folder's README.

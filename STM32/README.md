@@ -131,6 +131,28 @@ ros2 topic echo /cmd_vel_ros
 
 ## Mapping and timeout behavior
 
+### Manual voltage control and automatic ramp
+
+Keep `cmd_vel_stm2_dac.py` running in terminal 1. In a second terminal with
+ROS 2 sourced, run this publisher instead of `ros_cmd.py`:
+
+```bash
+/usr/bin/python3 ros_voltage_cmd.py --step 0.1 --rate 0.2
+```
+
+Enter `p` or `s` to increase or decrease the voltage, or enter a number in
+volts. Enter `a` to repeatedly ramp up and down at `--rate` volts/second;
+`m` holds the current target. Manual adjustments also leave automatic mode.
+Enter `n` to request neutral or `q` to exit and request neutral. Press Enter
+after each command. `0` requests the minimum allowed voltage, not neutral.
+
+This script imports the mapping constants from `cmd_vel_stm2_dac.py` and
+converts voltage targets to `/cmd_vel_ros` velocity messages at 10 Hz. With
+the current bridge settings, targets are clamped to 0.5–3.3 V and neutral is
+1.9 V. Restart both scripts after changing mapping constants. The displayed
+voltage is a requested target, not a measured DAC output. Run only one
+publisher on `/cmd_vel_ros` at a time.
+
 ```text
 voltage = voltage_min + (velocity - velocity_min)
           * (voltage_max - voltage_min) / (velocity_max - velocity_min)
