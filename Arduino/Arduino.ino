@@ -5,7 +5,7 @@
 #include <string.h>
 
 // STM32duino 3.x Black Pill: USART1 PA9=TX, PA10=RX.
-#define ControlSerial Serial1
+#define ControlSerial Serial
 #define DAC_SDA PB7
 #define DAC_SCL PB6
 
@@ -19,7 +19,7 @@ constexpr float MAX_ALLOWED_VELOCITY = 100.0f;
 
 uint8_t selectedChannel = 0;
 float velocityMin = -5.0f, velocityMax = 5.0f;
-float voltageMin = 0.0f, voltageMax = 5.0f;
+float voltageMin = 0.5f, voltageMax = 3.3f;
 bool configured = false;
 bool dacReady = false;
 bool timedOut = true;
@@ -36,7 +36,7 @@ uint16_t voltageToCode(float volts) {
 }
 
 // MCP4728 multi-write, VREF=VDD, normal mode, gain 1, volatile only.
-// LDAC must be tied LOW for immediate output changes.
+// UDAC=0 requests an immediate update; tying LDAC LOW is also supported.
 bool writeChannel(uint8_t ch, float volts) {
   if (ch > 3) return false;
   uint16_t code = voltageToCode(volts);
@@ -44,7 +44,40 @@ bool writeChannel(uint8_t ch, float volts) {
   Wire.write((uint8_t)(0x40 | (ch << 1))); // Multi-write command, channel
   Wire.write((uint8_t)((code >> 8) & 0x0F)); // VREF=0, PD=00, GAIN=0
   Wire.write((uint8_t)(code & 0xFF));
-  return Wire.endTransmission() == 0;
+  uint8_t status = Wire.endTransmission();
+  if (status != 0) {
+    ControlSerial.print("WARN:I2C_WRITE:ADDR:0x");
+    ControlSerial.print(DAC_ADDRESS, HEX);
+    ControlSerial.print(",CH:");
+    ControlSerial.print(ch);
+    ControlSerial.print(",CODE:");
+    ControlSerial.println(status);
+  }
+  return status == 0;
+}
+
+// Diagnostic only: probe addresses without changing the configured DAC address.
+void scanI2C() {
+  ControlSerial.println("I2CSCAN:BEGIN");
+  uint8_t found = 0;
+  for (uint8_t address = 0x08; address <= 0x77; ++address) {
+    Wire.beginTransmission(address);
+    uint8_t status = Wire.endTransmission();
+    if (status == 0) {
+      ControlSerial.print("I2CSCAN:FOUND:0x");
+      ControlSerial.println(address, HEX);
+      ++found;
+    } else if (status != 2) {
+      ControlSerial.print("I2CSCAN:ERROR:0x");
+      ControlSerial.print(address, HEX);
+      ControlSerial.print(",CODE:");
+      ControlSerial.println(status);
+      // Stop on a bus error instead of repeating a possible bus timeout.
+      break;
+    }
+  }
+  ControlSerial.print("I2CSCAN:END:FOUND:");
+  ControlSerial.println(found);
 }
 
 float velocityToVoltage(float velocity) {
@@ -169,6 +202,13 @@ void processVelocity(const char *data) {
 
 void processLine(const char *cmd) {
   if (strcmp(cmd, "PING") == 0) ControlSerial.println("PONG");
+  else if (strcmp(cmd, "I2CSCAN") == 0) {
+    if (configured && !timedOut) {
+      ControlSerial.println("ERR:STOP_BEFORE_SCAN");
+      return;
+    }
+    scanI2C();
+  }
   else if (strcmp(cmd, "STATUS") == 0) {
     ControlSerial.print("STATUS:CH:"); ControlSerial.print(selectedChannel);
     ControlSerial.print(",DAC:"); ControlSerial.print(dacReady ? 1 : 0);

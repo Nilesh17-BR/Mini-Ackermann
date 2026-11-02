@@ -9,7 +9,7 @@ Both scripts run on the same computer. No ROS installation is required.
 | `serial_dac.py` | Receives targets and communicates with STM32 using pyserial |
 | `config.py` | Shared voltage mapping, serial port and UDP settings |
 | `requirements.txt` | Python dependencies |
-| `dac_stm32/dac_stm32.ino` | STM32 firmware |
+| `../Arduino/Arduino.ino` | STM32 firmware |
 
 ```text
 Keyboard -> voltage_control.py -> UDP 127.0.0.1:5005
@@ -164,7 +164,7 @@ ERR responses stop the bridge, which attempts STOP during cleanup.
 
 ## Firmware and wiring
 
-Upload `dac_stm32/dac_stm32.ino` through the Arduino IDE with the STM32duino
+Upload `../Arduino/Arduino.ino` through the Arduino IDE with the STM32duino
 core and the board/upload method appropriate to your STM32. This is the same
 firmware as the ROS version; an existing upload does not need changing solely
 to use these scripts.

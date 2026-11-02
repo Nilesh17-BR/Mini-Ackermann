@@ -62,3 +62,8 @@ Firmware startup writes 0 V before mapping is configured. Keep the downstream
 drive disabled during startup and configuration, and verify actual output
 and the controller's required neutral voltage before operation. Wiring and
 firmware-upload instructions are in each folder's README.
+
+## Shared Arduino firmware
+
+Both `STM32` and `STM32_No_ROS` use [Arduino/Arduino.ino](Arduino/Arduino.ino).
+Open this sketch in the Arduino IDE to compile and upload it.

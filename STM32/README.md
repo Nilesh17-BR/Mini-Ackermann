@@ -64,7 +64,7 @@ a UART adapter connected to PA9/PA10 for this firmware.
 
 ## Upload firmware
 
-Open `dac_stm32/dac_stm32.ino` in the Arduino IDE. Select the board matching
+Open `../Arduino/Arduino.ino` in the Arduino IDE. Select the board matching
 your actual STM32 chip and an upload method supported by your hardware, then
 compile and upload. The sketch uses core Arduino and Wire libraries and writes
 the MCP4728 protocol directly; no additional DAC library is required.
