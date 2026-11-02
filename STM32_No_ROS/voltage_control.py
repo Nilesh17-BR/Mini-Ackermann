@@ -136,7 +136,10 @@
 import socket
 import time
 import threading
+import argparse
+import math
 from pynput import keyboard
+from serial_dac import voltage_to_velocity
 
 from config import (
     MIN_VOLTAGE,
@@ -166,6 +169,7 @@ voltage = neutral
 hold_enabled = False  # Default OFF
 pressed = set()
 running = True
+entering_input = False
 lock = threading.Lock()
 
 
@@ -181,16 +185,53 @@ def change_voltage(direction):
     )
 
 
+def enter_target(unit):
+    global voltage, entering_input
+
+    try:
+        label = 'voltage (V)' if unit == 'v' else 'velocity (m/s)'
+        raw = input(f'\nEnter {label}, then press Enter: ').strip().lower()
+        # The shortcut key can also be echoed into the console input buffer.
+        value = float(raw.lstrip(unit).strip())
+        if not math.isfinite(value):
+            raise ValueError
+        if unit == 'l':
+            value = max(MIN_LINEAR_VELOCITY, min(MAX_LINEAR_VELOCITY, value))
+            value = MIN_VOLTAGE + (value - MIN_LINEAR_VELOCITY) * (
+                MAX_VOLTAGE - MIN_VOLTAGE
+            ) / (MAX_LINEAR_VELOCITY - MIN_LINEAR_VELOCITY)
+        with lock:
+            if running:
+                voltage = max(MIN_VOLTAGE, min(MAX_VOLTAGE, value))
+    except (ValueError, EOFError):
+        print('Invalid input; target unchanged.', flush=True)
+    finally:
+        with lock:
+            pressed.clear()
+            entering_input = False
+
+
 def on_press(key):
-    global voltage, hold_enabled, running
+    global voltage, hold_enabled, running, entering_input
 
     with lock:
+        if key == keyboard.Key.esc:
+            running = False
+            return False
+        if entering_input:
+            return
         if key in pressed:
             return
 
         pressed.add(key)
 
-        if key == keyboard.Key.up:
+        char = (getattr(key, 'char', None) or '').lower()
+        if char in ('v', 'l'):
+            entering_input = True
+            pressed.clear()
+            threading.Thread(target=enter_target, args=(char,), daemon=True).start()
+
+        elif key == keyboard.Key.up:
             change_voltage(1)
 
         elif key == keyboard.Key.down:
@@ -215,28 +256,76 @@ def on_release(key):
         # Keep last voltage. No neutral reset.
 
 
+def terminal_commands():
+    global voltage, running
+
+    while running:
+        try:
+            command = input().strip().lower()
+        except EOFError:
+            with lock:
+                running = False
+            return
+        if command in ('q', 'quit'):
+            with lock:
+                running = False
+            return
+        if command in ('n', 'neutral'):
+            with lock:
+                voltage = neutral
+            continue
+        try:
+            unit, value = command.split()
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError
+            if unit in ('vel', 'velocity'):
+                value = max(MIN_LINEAR_VELOCITY, min(MAX_LINEAR_VELOCITY, value))
+                value = MIN_VOLTAGE + (value - MIN_LINEAR_VELOCITY) * (
+                    MAX_VOLTAGE - MIN_VOLTAGE
+                ) / (MAX_LINEAR_VELOCITY - MIN_LINEAR_VELOCITY)
+            elif unit not in ('v', 'voltage'):
+                raise ValueError
+            with lock:
+                voltage = max(MIN_VOLTAGE, min(MAX_VOLTAGE, value))
+        except ValueError:
+            print('Use: v 2.0 | vel 1.0 | n (neutral) | q (quit)', flush=True)
+
+
 def main():
     global running
 
+    parser = argparse.ArgumentParser(description='Control voltage or mapped velocity.')
+    parser.add_argument('--terminal', action='store_true',
+                        help='type voltage/velocity commands instead of using arrow keys')
+    args = parser.parse_args()
     destination = (LOCAL_HOST, LOCAL_PORT)
 
-    listener = keyboard.Listener(
-        on_press=on_press,
-        on_release=on_release
-    )
-    listener.start()
+    listener = None
 
     print("\nSTM32 VOLTAGE CONTROL")
-    print("UP     : Increase voltage")
-    print("DOWN   : Decrease voltage")
-    print("H      : Toggle continuous hold mode")
-    print("SPACE  : Neutral")
-    print("ESC    : Exit")
+    if args.terminal:
+        print('Type v 2.0 (volts) or vel 1.0 (m/s), then Enter.')
+        print('n: neutral | q: quit | Values are clamped to the configured range.')
+        print('Velocity is a mapped command, not measured speed.')
+        threading.Thread(target=terminal_commands, daemon=True).start()
+    else:
+        listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+        listener.start()
+        print("UP     : Increase voltage")
+        print("DOWN   : Decrease voltage")
+        print("H      : Toggle continuous hold mode")
+        print("V      : Enter voltage; press Enter to apply")
+        print("L      : Enter velocity; press Enter to apply")
+        print("SPACE  : Neutral")
+        print("ESC    : Exit")
+        print('Use --terminal to type voltage or velocity targets.')
     print(f"Neutral voltage: {neutral:.3f} V")
     print("HOLD: OFF")
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
         last_step = time.monotonic()
+        last_display = None
 
         try:
             while True:
@@ -246,7 +335,7 @@ def main():
                     if not running:
                         break
 
-                    if hold_enabled and now - last_step >= INTERVAL:
+                    if hold_enabled and not entering_input and now - last_step >= INTERVAL:
                         if keyboard.Key.up in pressed and keyboard.Key.down not in pressed:
                             change_voltage(1)
                         elif keyboard.Key.down in pressed and keyboard.Key.up not in pressed:
@@ -258,18 +347,21 @@ def main():
 
                     target = voltage
                     mode = hold_enabled
+                    editing = entering_input
 
                 sender.sendto(
                     f"{target:.6f}".encode("ascii"),
                     destination
                 )
 
-                print(
-                    f"\rVoltage: {target:.3f} V "
-                    f"| HOLD: {'ON ' if mode else 'OFF'}",
-                    end="",
-                    flush=True
-                )
+                if not editing and (target, mode) != last_display:
+                    print(
+                        f"Voltage: {target:.3f} V "
+                        f"| Commanded velocity: {voltage_to_velocity(target):+.3f} m/s "
+                        f"| HOLD: {'ON' if mode else 'OFF'}",
+                        flush=True
+                    )
+                    last_display = (target, mode)
 
                 time.sleep(SEND_PERIOD)
 
@@ -280,7 +372,8 @@ def main():
             for _ in range(3):
                 sender.sendto(b"STOP", destination)
                 time.sleep(0.05)
-            listener.stop()
+            if listener is not None:
+                listener.stop()
 
     print("\nNeutral requested. Exiting.")
 

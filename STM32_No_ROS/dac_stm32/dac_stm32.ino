@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// STM32duino 3.x Black Pill: USART1 PA9=TX, PA10=RX.
-#define ControlSerial Serial1
+// Black Pill onboard USB; enable USB CDC in the Arduino board settings.
+#define ControlSerial Serial
 #define DAC_SDA PB7
 #define DAC_SCL PB6
 
