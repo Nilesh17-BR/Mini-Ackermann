@@ -139,11 +139,14 @@ import threading
 import argparse
 import math
 from pynput import keyboard
-from serial_dac import voltage_to_velocity
+from serial_dac import voltage_to_velocity, velocity_to_voltage
 
 from config import (
     MIN_VOLTAGE,
     MAX_VOLTAGE,
+    NEUTRAL_VOLTAGE,
+    VESC_GAIN,
+    VESC_OFFSET,
     MIN_LINEAR_VELOCITY,
     MAX_LINEAR_VELOCITY,
     SEND_PERIOD,
@@ -155,12 +158,15 @@ STEP = 0.1
 INTERVAL = 0.2
 
 
+def voltage_estimates(velocity):
+    """Return target VESC voltage and required DAC voltage, not feedback."""
+    required_dac_voltage = velocity_to_voltage(velocity)
+    vesc_voltage = required_dac_voltage * VESC_GAIN + VESC_OFFSET
+    return vesc_voltage, required_dac_voltage
+
+
 def neutral_voltage():
-    return MIN_VOLTAGE + (
-        (0 - MIN_LINEAR_VELOCITY)
-        * (MAX_VOLTAGE - MIN_VOLTAGE)
-        / (MAX_LINEAR_VELOCITY - MIN_LINEAR_VELOCITY)
-    )
+    return NEUTRAL_VOLTAGE
 
 
 neutral = neutral_voltage()
@@ -179,7 +185,7 @@ def change_voltage(direction):
     voltage = round(
         max(
             MIN_VOLTAGE,
-            min(MAX_VOLTAGE, voltage + direction * STEP)
+            min(MAX_VOLTAGE, voltage + direction * STEP / VESC_GAIN)
         ),
         3
     )
@@ -189,7 +195,7 @@ def enter_target(unit):
     global voltage, entering_input
 
     try:
-        label = 'voltage (V)' if unit == 'v' else 'velocity (m/s)'
+        label = 'VESC voltage (V)' if unit == 'v' else 'velocity (m/s)'
         raw = input(f'\nEnter {label}, then press Enter: ').strip().lower()
         # The shortcut key can also be echoed into the console input buffer.
         value = float(raw.lstrip(unit).strip())
@@ -197,9 +203,9 @@ def enter_target(unit):
             raise ValueError
         if unit == 'l':
             value = max(MIN_LINEAR_VELOCITY, min(MAX_LINEAR_VELOCITY, value))
-            value = MIN_VOLTAGE + (value - MIN_LINEAR_VELOCITY) * (
-                MAX_VOLTAGE - MIN_VOLTAGE
-            ) / (MAX_LINEAR_VELOCITY - MIN_LINEAR_VELOCITY)
+            value = velocity_to_voltage(value)
+        else:
+            value = (value - VESC_OFFSET) / VESC_GAIN
         with lock:
             if running:
                 voltage = max(MIN_VOLTAGE, min(MAX_VOLTAGE, value))
@@ -281,10 +287,10 @@ def terminal_commands():
                 raise ValueError
             if unit in ('vel', 'velocity'):
                 value = max(MIN_LINEAR_VELOCITY, min(MAX_LINEAR_VELOCITY, value))
-                value = MIN_VOLTAGE + (value - MIN_LINEAR_VELOCITY) * (
-                    MAX_VOLTAGE - MIN_VOLTAGE
-                ) / (MAX_LINEAR_VELOCITY - MIN_LINEAR_VELOCITY)
-            elif unit not in ('v', 'voltage'):
+                value = velocity_to_voltage(value)
+            elif unit in ('v', 'voltage'):
+                value = (value - VESC_OFFSET) / VESC_GAIN
+            else:
                 raise ValueError
             with lock:
                 voltage = max(MIN_VOLTAGE, min(MAX_VOLTAGE, value))
@@ -305,22 +311,22 @@ def main():
 
     print("\nSTM32 VOLTAGE CONTROL")
     if args.terminal:
-        print('Type v 2.0 (volts) or vel 1.0 (m/s), then Enter.')
+        print('Type v 2.0 (VESC volts) or vel 1.0 (m/s), then Enter.')
         print('n: neutral | q: quit | Values are clamped to the configured range.')
         print('Velocity is a mapped command, not measured speed.')
         threading.Thread(target=terminal_commands, daemon=True).start()
     else:
         listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         listener.start()
-        print("UP     : Increase voltage")
-        print("DOWN   : Decrease voltage")
+        print("UP     : Increase target VESC voltage")
+        print("DOWN   : Decrease target VESC voltage")
         print("H      : Toggle continuous hold mode")
-        print("V      : Enter voltage; press Enter to apply")
+        print("V      : Enter VESC voltage; press Enter to apply")
         print("L      : Enter velocity; press Enter to apply")
         print("SPACE  : Neutral")
         print("ESC    : Exit")
         print('Use --terminal to type voltage or velocity targets.')
-    print(f"Neutral voltage: {neutral:.3f} V")
+    print(f"Neutral VESC voltage: {neutral * VESC_GAIN + VESC_OFFSET:.3f} V | DAC: {neutral:.3f} V")
     print("HOLD: OFF")
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
@@ -355,9 +361,13 @@ def main():
                 )
 
                 if not editing and (target, mode) != last_display:
+                    commanded_velocity = voltage_to_velocity(target)
+                    vesc_voltage, required_dac_voltage = voltage_estimates(commanded_velocity)
                     print(
-                        f"Voltage: {target:.3f} V "
-                        f"| Commanded velocity: {voltage_to_velocity(target):+.3f} m/s "
+                        f"DAC command: {target:.3f} V "
+                        f"| Commanded velocity: {commanded_velocity:+.3f} m/s "
+                        f"| Target VESC voltage: {vesc_voltage:.3f} V "
+                        f"| Required DAC voltage: {required_dac_voltage:.3f} V "
                         f"| HOLD: {'ON' if mode else 'OFF'}",
                         flush=True
                     )

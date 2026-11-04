@@ -18,8 +18,9 @@ constexpr unsigned long WATCHDOG_MS = 500;
 constexpr float MAX_ALLOWED_VELOCITY = 100.0f;
 
 uint8_t selectedChannel = 0;
+bool allChannels = false;
 float velocityMin = -5.0f, velocityMax = 5.0f;
-float voltageMin = 0.5f, voltageMax = 3.3f;
+float voltageMin = 0.5f, voltageMax = 5.0f;
 bool configured = false;
 bool dacReady = false;
 bool timedOut = true;
@@ -118,7 +119,8 @@ bool parseFloats(const char *s, float *v, uint8_t count) {
 }
 
 void processChannel(const char *data) {
-  if (strlen(data) != 1 || data[0] < '0' || data[0] > '3') {
+  const bool selectAll = strcmp(data, "ALL") == 0;
+  if (!selectAll && (strlen(data) != 1 || data[0] < '0' || data[0] > '3')) {
     ControlSerial.println("ERR:INVALID_CHANNEL");
     return;
   }
@@ -128,10 +130,12 @@ void processChannel(const char *data) {
     ControlSerial.println("ERR:DAC_WRITE_FAILED");
     return;
   }
-  selectedChannel = (uint8_t)(data[0] - '0');
+  allChannels = selectAll;
+  if (!selectAll) selectedChannel = (uint8_t)(data[0] - '0');
   timedOut = true;
   ControlSerial.print("OK:CH:");
-  ControlSerial.println(selectedChannel);
+  if (allChannels) ControlSerial.println("ALL");
+  else ControlSerial.println(selectedChannel);
 }
 
 void processMap(const char *data) {
@@ -183,7 +187,8 @@ void processVelocity(const char *data) {
   }
   float velocity = constrain(input[0], velocityMin, velocityMax);
   float volts = velocityToVoltage(velocity);
-  if (!writeChannel(selectedChannel, volts)) {
+  // Python selects one output with CH:0..3 or all outputs with CH:ALL.
+  if (!(allChannels ? writeAll(volts) : writeChannel(selectedChannel, volts))) {
     stopOutputs();
     timedOut = true;
     configured = false;
@@ -195,7 +200,8 @@ void processVelocity(const char *data) {
   ControlSerial.print("OK:CMD:");
   ControlSerial.print(velocity, 3);
   ControlSerial.print(",CH:");
-  ControlSerial.print(selectedChannel);
+  if (allChannels) ControlSerial.print("ALL");
+  else ControlSerial.print(selectedChannel);
   ControlSerial.print(",VL:");
   ControlSerial.println(volts, 3);
 }
@@ -210,7 +216,9 @@ void processLine(const char *cmd) {
     scanI2C();
   }
   else if (strcmp(cmd, "STATUS") == 0) {
-    ControlSerial.print("STATUS:CH:"); ControlSerial.print(selectedChannel);
+    ControlSerial.print("STATUS:CH:");
+    if (allChannels) ControlSerial.print("ALL");
+    else ControlSerial.print(selectedChannel);
     ControlSerial.print(",DAC:"); ControlSerial.print(dacReady ? 1 : 0);
     ControlSerial.print(",CONFIG:"); ControlSerial.print(configured ? 1 : 0);
     ControlSerial.print(",NEUTRAL:");
