@@ -196,3 +196,32 @@ mapping changes, and measure the actual neutral voltage before enabling it.
 - **UDP address already in use:** close the other bridge using port 5005; run one bridge and one controller.
 - **Target displayed but output stays neutral:** confirm the bridge is running on the same computer with matching UDP settings, and check terminal 1 for errors.
 - **DAC errors or unexpected voltage:** check supply, address, wiring, mapping and actual output with a meter.
+
+## ROS 2 with the same calibrated mapping
+
+`ros_serial_dac.py` receives `geometry_msgs/msg/Twist.linear.x` in m/s and
+uses the exact conversion functions and settings from `serial_dac.py` and
+`config.py`, including VESC gain/offset compensation, channel selection,
+firmware mapping, neutral, and the 0.5-second command timeout.
+`ros_voltage_control.py` provides the same keyboard controls as
+`voltage_control.py`, publishing velocity through ROS instead of UDP.
+
+Source your installed ROS 2 environment in both terminals, install the Python
+requirements, and run these commands from `STM32_No_ROS`:
+
+```bash
+# Terminal 1: serial bridge
+python3 ros_serial_dac.py --port /dev/ttyUSB0 --channel all
+
+# Terminal 2: voltage/velocity keyboard publisher
+python3 ros_voltage_control.py
+# Or use typed commands without a graphical keyboard listener:
+python3 ros_voltage_control.py --terminal
+```
+
+Typed commands include `v 2.0` (target VESC volts), `vel 1.0` (m/s),
+`n` (neutral), and `q` (quit). Both scripts default to `/cmd_vel_ros`;
+pass `--topic /cmd_vel` to both to use `/cmd_vel` instead. An existing
+Twist publisher can replace the keyboard controller. Only `linear.x` is used.
+The publisher sends at 10 Hz; quitting publishes zero velocity, and the bridge
+also requests neutral if messages stop. Run only one serial bridge per port.
