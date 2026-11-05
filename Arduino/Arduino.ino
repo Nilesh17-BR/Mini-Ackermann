@@ -206,6 +206,34 @@ void processVelocity(const char *data) {
   ControlSerial.println(volts, 3);
 }
 
+// Independent A, B, C, D targets in one message; no channel-selection reset.
+void processFourVelocities(const char *data) {
+  if (!configured || !dacReady) {
+    ControlSerial.println("ERR:NOT_CONFIGURED");
+    return;
+  }
+  float input[4];
+  if (!parseFloats(data, input, 4)) {
+    stopOutputs();
+    timedOut = true;
+    ControlSerial.println("ERR:BAD_VELOCITY");
+    return;
+  }
+  for (uint8_t ch = 0; ch < 4; ++ch) {
+    if (!writeChannel(ch, velocityToVoltage(input[ch]))) {
+      stopOutputs();
+      timedOut = true;
+      configured = false;
+      dacReady = false;
+      ControlSerial.println("ERR:DAC_WRITE_FAILED");
+      return;
+    }
+  }
+  lastCommandMs = millis();
+  timedOut = false;
+  ControlSerial.println("OK:CMD4:");
+}
+
 void processLine(const char *cmd) {
   if (strcmp(cmd, "PING") == 0) ControlSerial.println("PONG");
   else if (strcmp(cmd, "I2CSCAN") == 0) {
@@ -227,6 +255,7 @@ void processLine(const char *cmd) {
   else if (strncmp(cmd, "CH:", 3) == 0) processChannel(cmd + 3);
   else if (strncmp(cmd, "MAP:", 4) == 0) processMap(cmd + 4);
   else if (strncmp(cmd, "CMD:", 4) == 0) processVelocity(cmd + 4);
+  else if (strncmp(cmd, "CMD4:", 5) == 0) processFourVelocities(cmd + 5);
   else if (strcmp(cmd, "STOP") == 0) {
     timedOut = true;
     ControlSerial.println(stopOutputs() ? "OK:STOP" : "ERR:DAC_WRITE_FAILED");
